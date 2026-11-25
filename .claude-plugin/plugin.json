@@ -1,0 +1,25 @@
+{
+  "name": "cache-timer",
+  "version": "0.3.0",
+  "description": "Shows how long the main conversation's prompt cache stays warm (1h / 5m) next to the model and permission labels, with an optional progress bar; 中文 / English",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language / 语言",
+      "description": "auto follows Claude Code's language setting (English if unset); zh = 中文, en = English. Affects the expiry reminders.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "zh",
+        "en"
+      ]
+    },
+    "showBar": {
+      "type": "boolean",
+      "title": "Show progress bar / 显示进度条",
+      "description": "Show the bar before the countdown; off shows only the time",
+      "default": true
+    }
+  }
+}
