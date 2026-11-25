@@ -1,6 +1,6 @@
 {
   "name": "cache-timer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Shows how long the main conversation's prompt cache stays warm (1h / 5m) next to the model and permission labels, with an optional progress bar; 中文 / English",
   "types": "./types/index.d.ts",
   "userConfig": {

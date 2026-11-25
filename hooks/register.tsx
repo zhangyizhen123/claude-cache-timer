@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, TurnUsage } from 'claude-code'
+import type { EngineInterface, Register, TurnUsage } from 'claude-code'
 
 import type { CacheMark } from '../types'
 
@@ -54,39 +54,71 @@ function langOf(text: unknown): Lang | null {
   return null
 }
 
+/** 计时器要读写的状态，放在 register 里创建，传给顶层的 startTicker。 */
+type Ctx = {
+  ticking: boolean
+  warnedFor: number
+  coldFor: number
+  fixed: Lang | null
+  fromSettings: Lang | null
+}
+
+function langNow(ctx: Ctx): Lang {
+  return ctx.fixed ?? ctx.fromSettings ?? 'en'
+}
+
+/**
+ * 每秒刷新一次并检查是否该提醒。由第一个拿到 $ 的钩子启动，只启动一次：
+ * 不依赖 session.start，这样它没跑或出错时，倒计时也会在第一次回复后出现。
+ */
+function startTicker($: EngineInterface, ctx: Ctx): void {
+  if (ctx.ticking) return
+  ctx.ticking = true
+  if (ctx.fixed === null) {
+    void $.settings
+      .read({ key: 'language' })
+      .then(v => {
+        ctx.fromSettings = langOf(v)
+      })
+      .catch(() => {})
+  }
+  $.clock.every(1000, () => {
+    void (async () => {
+      $.ui.invalidate('ui.render')
+      const mark = await read($, last)
+      if (mark === null) return
+      const left = mark.at + TTL_MS[mark.ttl] - (await $.clock.now())
+      if (left <= 0 && ctx.coldFor !== mark.at) {
+        ctx.coldFor = mark.at
+        $.ui.toast(TEXT[langNow(ctx)].cold)
+      } else if (left > 0 && left <= WARN_MS[mark.ttl] && ctx.warnedFor !== mark.at) {
+        ctx.warnedFor = mark.at
+        $.ui.toast(TEXT[langNow(ctx)].warn(clock(left)), { timeoutMs: 8000 })
+      }
+    })().catch(() => {})
+  })
+}
+
 export const register: Register = (on, options) => {
-  let warnedFor = 0
-  let coldFor = 0
   // 语言：插件选项 zh/en 优先；auto 时看 Claude Code 的 language 设置；都没有就用英文
-  const fixed = langOf(String(options?.language ?? 'auto'))
-  let fromSettings: Lang | null = null
+  const ctx: Ctx = {
+    ticking: false,
+    warnedFor: 0,
+    coldFor: 0,
+    fixed: langOf(String(options?.language ?? 'auto')),
+    fromSettings: null,
+  }
   // 选项：是否在时间前面画进度条，默认画
   const showBar = options?.showBar !== false
   // 主对话有请求正在进行时为 true（显示 HOT）
   let working = false
-  const lang = (): Lang => fixed ?? fromSettings ?? 'en'
 
   on('session.start', async ($, e, next) => {
-    if (fixed === null) {
-      fromSettings = langOf(await $.settings.read({ key: 'language' }))
+    try {
+      startTicker($, ctx)
+    } catch {
+      ctx.ticking = false
     }
-
-    $.clock.every(1000, () => {
-      void (async () => {
-        $.ui.invalidate('ui.render')
-        const mark = await read($, last)
-        if (mark === null) return
-        const left = mark.at + TTL_MS[mark.ttl] - (await $.clock.now())
-        if (left <= 0 && coldFor !== mark.at) {
-          coldFor = mark.at
-          $.ui.toast(TEXT[lang()].cold)
-        } else if (left > 0 && left <= WARN_MS[mark.ttl] && warnedFor !== mark.at) {
-          warnedFor = mark.at
-          $.ui.toast(TEXT[lang()].warn(clock(left)), { timeoutMs: 8000 })
-        }
-      })()
-    })
-
     return next(e)
   })
 
@@ -94,8 +126,14 @@ export const register: Register = (on, options) => {
     // 子代理有自己的缓存，不影响主对话
     if (e.agentId !== undefined) return yield* next(e)
 
+    try {
+      startTicker($, ctx)
+    } catch {
+      ctx.ticking = false
+    }
     const at = await $.clock.now()
     working = true
+    $.ui.invalidate('ui.render')
     let result
     try {
       result = yield* next(e)
@@ -110,6 +148,7 @@ export const register: Register = (on, options) => {
         return ttl === null ? previous : { at, ttl }
       })
     }
+    $.ui.invalidate('ui.render')
 
     return result
   })
